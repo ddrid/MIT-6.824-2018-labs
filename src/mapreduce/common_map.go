@@ -1,12 +1,16 @@
 package mapreduce
 
 import (
+	"encoding/json"
 	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"os"
 )
 
 func doMap(
 	jobName string, // the name of the MapReduce job
-	mapTask int, // which map task this is
+	mapTask int,    // which map task this is
 	inFile string,
 	nReduce int, // the number of reduce task that will be run ("R" in the paper)
 	mapF func(filename string, contents string) []KeyValue,
@@ -53,6 +57,43 @@ func doMap(
 	//
 	// Your code here (Part I).
 	//
+
+	fileContent, err := ioutil.ReadFile(inFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	//用户传入的mapF函数将读取的文件转换成键值对
+	kvPairs := mapF(inFile, string(fileContent))
+
+	//生成中间文件切片
+	intermediateFiles := make([] *os.File, nReduce)
+
+	//用于将kvPairs转换成json后写入中间文件的encoder
+	filesEncoder := make([] *json.Encoder, nReduce)
+
+
+	//此处nReduce指将同一个文件分散到nReduce个不同的reduceTask
+	for i := 0; i < nReduce; i++ {
+		intermediateFiles[i], err = os.Create(reduceName(jobName, mapTask, i))
+		if err != nil {
+			log.Fatal(err)
+		}
+		filesEncoder[i] = json.NewEncoder(intermediateFiles[i])
+	}
+
+	for _, kv := range kvPairs {
+		err := filesEncoder[ihash(kv.Key)%nReduce].Encode(&kv)
+		//散列至每个中间文件
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	for _, file := range intermediateFiles {
+		file.Close()
+	}
+
 }
 
 func ihash(s string) int {
