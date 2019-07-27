@@ -99,52 +99,38 @@ func schedule(
 
 	var waitGroup sync.WaitGroup
 
-	//提供taskNumber
-	//taskNumberChan := make(chan int)
-
-	//等待任务执行完后关闭提供taskId的通道
-	//go func() {
-	//	for i := 0; i < ntasks; i++ {
-	//		taskNumberChan <- i
-	//		waitGroup.Add(1)
-	//	}
-	//	waitGroup.Wait()
-	//	close(taskNumberChan)
-	//}()
-
 	for taskNumber := 0; taskNumber < ntasks; taskNumber++ {
+
 		waitGroup.Add(1)
+
 		taskArgs.TaskNumber = taskNumber
 		if phase == mapPhase {
 			taskArgs.File = mapFiles[taskNumber]
 		}
 
 		go func(taskArgs DoTaskArgs) {
-
-			worker := <-registerChan
-
 			for {
+				worker := <-registerChan
 				if call(worker, "Worker.DoTask", &taskArgs, nil) {
 					waitGroup.Done()
 
 					//确认worker可以工作，放回registerChan
 					registerChan <- worker
 
+					//成功部署该task，跳出循环
 					break
 
 				} else {
+					//失败，继续循环部署给下一个registerChan中的worker
 					log.Printf("Worker:%s, TaskNumber:%d assigned failed !",
 						worker, taskArgs.TaskNumber)
-
-					//将失败的taskNumber放回taskNumberChan，供下次再次部署
-					//taskNumberChan <- taskArgs.TaskNumber
 				}
 			}
-
 		}(taskArgs)
 
 	}
+	
+	//等待任务部署完成
 	waitGroup.Wait()
 	fmt.Printf("Schedule: %v done\n", phase)
-
 }
