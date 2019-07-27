@@ -41,103 +41,55 @@ func schedule(
 	// Your code here (Part III, Part IV).
 	//
 
-	//var taskArgs DoTaskArgs
-	//
-	//taskArgs.JobName = jobName
-	//taskArgs.NumOtherPhase = n_other
-	//taskArgs.Phase = phase
-	//
-	//var waitGroup sync.WaitGroup
-	//
-	////提供taskNumber
-	//taskNumberChan := make(chan int)
-	//
-	//for i := 0; i < ntasks; i++ {
-	//	taskNumberChan <- i
-	//	waitGroup.Add(1)
-	//}
-	//
-	////等待任务执行完后关闭提供taskId的通道
-	//go func() {
-	//	waitGroup.Wait()
-	//	close(taskNumberChan)
-	//}()
-	//
-	//for taskNumber := range taskNumberChan {
-	//
-	//	taskArgs.TaskNumber = taskNumber
-	//	if phase == mapPhase {
-	//		taskArgs.File = mapFiles[taskNumber]
-	//	}
-	//
-	//	worker := <-registerChan
-	//
-	//	go func(worker string, taskArgs DoTaskArgs) {
-	//
-	//		if call(worker, "Worker.DoTask", taskArgs, nil) {
-	//			waitGroup.Done()
-	//
-	//			//确认worker可以工作，放回registerChan
-	//			registerChan <- worker
-	//		} else {
-	//			log.Printf("Worker:%s, TaskNumber:%d assigned failed !",
-	//				worker, taskArgs.TaskNumber)
-	//
-	//			//将失败的taskNumber放回taskNumberChan，供下次再次部署
-	//			taskNumberChan <- taskArgs.TaskNumber
-	//		}
-	//	}(worker, taskArgs)
-	//
-	//}
-	//
-	//fmt.Printf("Schedule: %v done\n", phase)
+	var taskArgs DoTaskArgs
 
-	var wg sync.WaitGroup
+	taskArgs.JobName = jobName
+	taskArgs.NumOtherPhase = n_other
+	taskArgs.Phase = phase
 
-	// RPC call parameter
-	var task DoTaskArgs
-	task.JobName = jobName
-	task.NumOtherPhase = n_other
-	task.Phase = phase
+	var waitGroup sync.WaitGroup
 
-	// task id will get from this channel
-	var taskChan = make(chan int)
+	//提供taskNumber
+	taskNumberChan := make(chan int)
+
+	for i := 0; i < ntasks; i++ {
+		taskNumberChan <- i
+		waitGroup.Add(1)
+	}
+
+	//等待任务执行完后关闭提供taskId的通道
 	go func() {
-		for i := 0; i < ntasks; i++ {
-			wg.Add(1)
-			taskChan <- i
-		}
-		// wait all workers have done their job, then close taskChan
-		wg.Wait()
-		close(taskChan)
+		waitGroup.Wait()
+		close(taskNumberChan)
 	}()
 
-	// assign all task to worker
-	for i := range taskChan {
-		// get a worker from register channel
-		worker := <-registerChan
+	for taskNumber := range taskNumberChan {
 
-		task.TaskNumber = i
+		taskArgs.TaskNumber = taskNumber
 		if phase == mapPhase {
-			task.File = mapFiles[i]
+			taskArgs.File = mapFiles[taskNumber]
 		}
 
-		// Note: must use parameter
-		go func(worker string, task DoTaskArgs) {
-			if call(worker, "Worker.DoTask", &task, nil) {
-				// only successful call will call wg.Done()
-				wg.Done()
+		worker := <-registerChan
 
-				// put idle worker back to register channel
-				registerChan <- worker;
+		go func(worker string, taskArgs DoTaskArgs) {
+
+			if call(worker, "Worker.DoTask", &taskArgs, nil) {
+				waitGroup.Done()
+
+				//确认worker可以工作，放回registerChan
+				registerChan <- worker
 			} else {
-				log.Printf("Schedule: assign %s task %v to %s failed", phase,
-					task.TaskNumber, worker)
+				log.Printf("Worker:%s, TaskNumber:%d assigned failed !",
+					worker, taskArgs.TaskNumber)
 
-				// put failed task back to task channel
-				taskChan <- task.TaskNumber
+				//将失败的taskNumber放回taskNumberChan，供下次再次部署
+				taskNumberChan <- taskArgs.TaskNumber
 			}
-		}(worker, task)
+		}(worker, taskArgs)
+
 	}
-	fmt.Printf("Schedule: %v phase done\n", phase)
+
+	fmt.Printf("Schedule: %v done\n", phase)
+
 }
