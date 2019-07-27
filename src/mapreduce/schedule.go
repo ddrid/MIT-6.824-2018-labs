@@ -52,13 +52,14 @@ func schedule(
 	//提供taskNumber
 	taskNumberChan := make(chan int)
 
-	for i := 0; i < ntasks; i++ {
-		taskNumberChan <- i
-		waitGroup.Add(1)
-	}
+
 
 	//等待任务执行完后关闭提供taskId的通道
 	go func() {
+		for i := 0; i < ntasks; i++ {
+			taskNumberChan <- i
+			waitGroup.Add(1)
+		}
 		waitGroup.Wait()
 		close(taskNumberChan)
 	}()
