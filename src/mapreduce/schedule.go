@@ -113,7 +113,7 @@ func schedule(
 	//}()
 
 	for taskNumber := 0; taskNumber < ntasks; taskNumber++ {
-
+		waitGroup.Add(1)
 		taskArgs.TaskNumber = taskNumber
 		if phase == mapPhase {
 			taskArgs.File = mapFiles[taskNumber]
@@ -144,7 +144,7 @@ func schedule(
 		}(taskArgs)
 
 	}
-
+	waitGroup.Wait()
 	fmt.Printf("Schedule: %v done\n", phase)
 
 }
