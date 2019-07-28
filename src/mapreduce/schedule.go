@@ -129,7 +129,7 @@ func schedule(
 		}(taskArgs)
 
 	}
-	
+
 	//等待任务部署完成
 	waitGroup.Wait()
 	fmt.Printf("Schedule: %v done\n", phase)
