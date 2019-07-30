@@ -278,7 +278,8 @@ func startElectionDaemon(rf *Raft) {
 }
 
 //Follower计时器超时，转变为Candidate
-func changingIntoCandidate(rf *Raft){
+func changingIntoCandidate(rf *Raft) {
+
 	var requestVoteArgs RequestVoteArgs
 
 	rf.mu.Lock()
@@ -293,40 +294,53 @@ func changingIntoCandidate(rf *Raft){
 	votes := 0
 
 	for id := 0; id < len(rf.peers); id++ {
-		if id != rf.me {
-			//对每一个peer开启一个go程，发送RequestVote并处理reply
-			go func(id int) {
-				var reply RequestVoteReply
-				isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply)
-				if isReceived {
-					//根据reply的情况改变自己的状态，需要加锁
-					rf.mu.Lock()
-					//假如还没有在别的go程中竞选成功变成leader或失败成为follower
-					if rf.State == Candidate {
-						//收到同意票
-						if reply.VoteGranted{
-							votes++
-							if votes > len(rf.peers)/2 {
-								rf.State = Leader
-
-
-							}
-						}
-						//从别处得知已经存在更高任期的leader，自动退位成follower
-						if reply.Term > requestVoteArgs.Term {
-							rf.CurrentTerm = reply.Term
-							rf.State = Follower
-							rf.VotedFor = -1
-							//关键的状态部分改完后进行持久化，以便灾后恢复
-							rf.persist()
-							//重置选举计时器
-							rf.ResetElectionTimerCh <- true
-						}
-					}
-
-					rf.mu.Unlock()
-				}
-			}(id)
+		if id == rf.me {
+			continue
 		}
+
+		//对每一个peer开启一个go程，发送RequestVote并处理reply
+		go func(id int) {
+			var reply RequestVoteReply
+			isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply)
+			if !isReceived {
+				DPrintf("Reply from Peer%d is not received", id)
+				return
+			}
+
+			//根据reply的情况改变自己的状态，需要加锁
+			rf.mu.Lock()
+
+			//假如已经在别的go程中竞选成功变成leader或失败成为follower则不再继续执行
+			if rf.State != Candidate {
+				DPrintf("No.%d is not a candidate anymore", rf.me)
+				rf.mu.Unlock()
+				return
+			}
+
+			//收到同意票
+			if reply.VoteGranted {
+				votes++
+				if votes > len(rf.peers)/2 {
+					rf.State = Leader
+
+
+
+				}
+			}
+			//从别处得知已经存在更高任期的leader，自动退位成follower
+			if reply.Term > requestVoteArgs.Term {
+				rf.CurrentTerm = reply.Term
+				rf.State = Follower
+				rf.VotedFor = -1
+				//关键的状态部分改完后进行持久化，以便灾后恢复
+				rf.persist()
+				//重置选举计时器
+				rf.ResetElectionTimerCh <- true
+			}
+
+			rf.mu.Unlock()
+
+		}(id)
+
 	}
 }
