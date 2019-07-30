@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"bytes"
+	"encoding/gob"
 	"math/rand"
 	"sync"
 	"time"
@@ -63,13 +65,13 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	currentTerm int //当前服务器被最近一任leader通知的term，单调递增
-	voteFor     int //投给了谁
+	CurrentTerm int //当前服务器被最近一任leader通知的term，单调递增
+	VotedFor    int //投给了谁
 
-	electionTimer        *time.Timer //选举计时器
-	resetElectionTimerCh chan bool   //用于重置选举计时器
+	ElectionTimer        *time.Timer //选举计时器
+	ResetElectionTimerCh chan bool   //用于重置选举计时器
 
-	state int //Follower,Candidate,Leader
+	State int //Follower,Candidate,Leader
 }
 
 // return currentTerm and whether this server
@@ -89,13 +91,15 @@ func (rf *Raft) GetState() (int, bool) {
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+
+	e.Encode(rf.CurrentTerm)
+	e.Encode(rf.VotedFor)
+
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -126,10 +130,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	term         int //发起竞选者的term
-	candidateId  int //发起竞选者的Id
-	lastLogIndex int //发起竞选者的最后一条日志的index
-	lastLogTerm  int //发起竞选者的最后一条日志的term
+	Term         int //发起竞选者的term
+	CandidateId  int //发起竞选者的Id
+	LastLogIndex int //发起竞选者的最后一条日志的index
+	LastLogTerm  int //发起竞选者的最后一条日志的term
 }
 
 //
@@ -138,8 +142,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	term        int  //返回当前任期，若比发起竞选者当前的大则自动退选并更新任期
-	voteGranted bool //是否同意投该候选者
+	Term        int  //返回当前任期，若比发起竞选者当前的大则自动退选并更新任期
+	VoteGranted bool //是否同意投该候选者
 }
 
 //
@@ -237,12 +241,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 
-	rf.state = Follower
-	rf.voteFor = -1
+	rf.State = Follower
+	rf.VotedFor = -1
 
-	//150-300ms
-	rf.electionTimer = time.NewTimer(time.Millisecond * time.Duration(150+rand.Intn(50)*3))
-	rf.resetElectionTimerCh = make(chan bool)
+	//300-500ms
+	rf.ElectionTimer = time.NewTimer(time.Millisecond * time.Duration(300+rand.Intn(50)*4))
+	rf.ResetElectionTimerCh = make(chan bool)
 
 	//开始参与竞选
 	go startElectionDaemon(rf)
@@ -259,21 +263,70 @@ func startElectionDaemon(rf *Raft) {
 		select {
 
 		//重置计时器
-		case <-rf.resetElectionTimerCh:
-			if !rf.electionTimer.Stop() {
-				<-rf.electionTimer.C
+		case <-rf.ResetElectionTimerCh:
+			if !rf.ElectionTimer.Stop() {
+				<-rf.ElectionTimer.C
 			}
 			//150-300ms
-			rf.electionTimer.Reset(time.Millisecond * time.Duration(150+rand.Intn(50)*3))
+			rf.ElectionTimer.Reset(time.Millisecond * time.Duration(300+rand.Intn(50)*4))
 
 		//选举计时器超时，自己成为竞选者
-		case <-rf.electionTimer.C:
-			for id := 0; id < len(rf.peers); id++ {
-				if id != rf.me {
-					go func(id int){
-					}(id)
+		case <-rf.ElectionTimer.C:
+			changingIntoCandidate(rf)
+		}
+	}
+}
+
+//Follower计时器超时，转变为Candidate
+func changingIntoCandidate(rf *Raft){
+	var requestVoteArgs RequestVoteArgs
+
+	rf.mu.Lock()
+	rf.VotedFor = rf.me
+	rf.CurrentTerm += 1
+	rf.State = Candidate
+	requestVoteArgs.Term = rf.CurrentTerm
+	requestVoteArgs.CandidateId = rf.me
+	rf.mu.Unlock()
+
+	//该竞选者得票数
+	votes := 0
+
+	for id := 0; id < len(rf.peers); id++ {
+		if id != rf.me {
+			//对每一个peer开启一个go程，发送RequestVote并处理reply
+			go func(id int) {
+				var reply RequestVoteReply
+				isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply)
+				if isReceived {
+					//根据reply的情况改变自己的状态，需要加锁
+					rf.mu.Lock()
+					//假如还没有在别的go程中竞选成功变成leader或失败成为follower
+					if rf.State == Candidate {
+						//收到同意票
+						if reply.VoteGranted{
+							votes++
+							if votes > len(rf.peers)/2 {
+								rf.State = Leader
+
+
+							}
+						}
+						//从别处得知已经存在更高任期的leader，自动退位成follower
+						if reply.Term > requestVoteArgs.Term {
+							rf.CurrentTerm = reply.Term
+							rf.State = Follower
+							rf.VotedFor = -1
+							//关键的状态部分改完后进行持久化，以便灾后恢复
+							rf.persist()
+							//重置选举计时器
+							rf.ResetElectionTimerCh <- true
+						}
+					}
+
+					rf.mu.Unlock()
 				}
-			}
+			}(id)
 		}
 	}
 }
