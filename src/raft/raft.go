@@ -17,13 +17,15 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "labrpc"
+import (
+	"math/rand"
+	"sync"
+	"time"
+)
+import "../labrpc"
 
 // import "bytes"
 // import "labgob"
-
-
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -42,6 +44,12 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+const (
+	Follower = iota
+	Candidate
+	Leader
+)
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -55,6 +63,13 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	currentTerm int //当前服务器被最近一任leader通知的term，单调递增
+	voteFor     int //投给了谁
+
+	electionTimer        *time.Timer //选举计时器
+	resetElectionTimerCh chan bool   //用于重置选举计时器
+
+	state int //Follower,Candidate,Leader
 }
 
 // return currentTerm and whether this server
@@ -66,7 +81,6 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	return term, isleader
 }
-
 
 //
 // save Raft's persistent state to stable storage,
@@ -83,7 +97,6 @@ func (rf *Raft) persist() {
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
 }
-
 
 //
 // restore previously persisted state.
@@ -107,15 +120,16 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
-
-
-
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	term         int //发起竞选者的term
+	candidateId  int //发起竞选者的Id
+	lastLogIndex int //发起竞选者的最后一条日志的index
+	lastLogTerm  int //发起竞选者的最后一条日志的term
 }
 
 //
@@ -124,6 +138,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	term        int  //返回当前任期，若比发起竞选者当前的大则自动退选并更新任期
+	voteGranted bool //是否同意投该候选者
 }
 
 //
@@ -167,7 +183,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -188,7 +203,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
 
 	return index, term, isLeader
 }
@@ -223,9 +237,43 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 
+	rf.state = Follower
+	rf.voteFor = -1
+
+	//150-300ms
+	rf.electionTimer = time.NewTimer(time.Millisecond * time.Duration(150+rand.Intn(50)*3))
+	rf.resetElectionTimerCh = make(chan bool)
+
+	//开始参与竞选
+	go startElectionDaemon(rf)
+
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
-
 	return rf
+}
+
+//关于竞选事务的守护进程
+func startElectionDaemon(rf *Raft) {
+	for {
+		select {
+
+		//重置计时器
+		case <-rf.resetElectionTimerCh:
+			if !rf.electionTimer.Stop() {
+				<-rf.electionTimer.C
+			}
+			//150-300ms
+			rf.electionTimer.Reset(time.Millisecond * time.Duration(150+rand.Intn(50)*3))
+
+		//选举计时器超时，自己成为竞选者
+		case <-rf.electionTimer.C:
+			for id := 0; id < len(rf.peers); id++ {
+				if id != rf.me {
+					go func(id int){
+					}(id)
+				}
+			}
+		}
+	}
 }
