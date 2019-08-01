@@ -463,6 +463,10 @@ func sendingHeartbeatDaemon(rf *Raft) {
 			go func(id int) {
 				var appendEntriesArgs AppendEntriesArgs
 				var reply AppendEntriesReply
+
+				appendEntriesArgs.Term = rf.CurrentTerm
+				appendEntriesArgs.LeaderID = rf.me
+
 				if rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
 					if reply.Success != true {
 						if reply.Term > rf.CurrentTerm {
