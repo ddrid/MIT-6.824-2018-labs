@@ -93,7 +93,7 @@ func (rf *Raft) GetState() (int, bool) {
 
 	term = rf.CurrentTerm
 	isLeader = false
-	if rf.State == Leader{
+	if rf.State == Leader {
 		isLeader = true
 	}
 
@@ -181,7 +181,6 @@ type AppendEntriesReply struct {
 	Term    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
 }
-
 
 //
 // example code to send a RequestVote RPC to a server.
@@ -343,7 +342,7 @@ func changingIntoCandidate(rf *Raft) {
 			var reply RequestVoteReply
 			isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply)
 			if !isReceived {
-				DPrintf("Reply from Peer%d is not received", id)
+				DPrintf("Candidate No.%d didn't receive reply from Peer%d ", rf.me, id)
 				return
 			}
 
@@ -363,12 +362,12 @@ func changingIntoCandidate(rf *Raft) {
 				DPrintf("No.%d got one vote, current amount of votes: %d", rf.me, votes)
 				if votes > len(rf.peers)/2 {
 					rf.State = Leader
-					DPrintf("No.%d has become the new leader, term: %d", rf.me, rf.CurrentTerm)
+					DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
 					go sendingHeartbeatDaemon(rf)
 
 				}
 			} else if reply.Term > requestVoteArgs.Term {
-				DPrintf("No.%d has quit because of there exists a leader of higher term",rf.me)
+				DPrintf("No.%d has quit because of there exists a leader of higher term", rf.me)
 				//从别处得知已经存在更高任期的leader，自动退位成follower
 				rf.CurrentTerm = reply.Term
 				rf.State = Follower
@@ -424,8 +423,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 }
 
-
-
 func sendingHeartbeatDaemon(rf *Raft) {
 	for {
 		//不是leader了则不再发送心跳
@@ -448,16 +445,19 @@ func sendingHeartbeatDaemon(rf *Raft) {
 				appendEntriesArgs.Term = rf.CurrentTerm
 				appendEntriesArgs.LeaderID = rf.me
 
-				if rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
-					if reply.Success != true {
-						if reply.Term > rf.CurrentTerm {
-							rf.mu.Lock()
-							rf.CurrentTerm = reply.Term
-							rf.State = Follower
-							rf.VotedFor = -1
-							rf.mu.Unlock()
-							DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
-						}
+				if !rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
+					DPrintf("Current leader No.%d didn't received heartBeatReply from No.%d", rf.me, id)
+					return
+				}
+
+				if reply.Success != true {
+					if reply.Term > rf.CurrentTerm {
+						rf.mu.Lock()
+						rf.CurrentTerm = reply.Term
+						rf.State = Follower
+						rf.VotedFor = -1
+						rf.mu.Unlock()
+						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
 				}
 
@@ -469,7 +469,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 
 	}
 }
-
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 
