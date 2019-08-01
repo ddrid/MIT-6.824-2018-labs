@@ -294,7 +294,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 func startElectionDaemon(rf *Raft) {
 
 	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
-
+	DPrintf("No.%d current state: %d",rf.State)
+	
 	for {
 		select {
 		//重置计时器
@@ -463,7 +464,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 					}
 					return
 				}
-
 			}(id)
 		}
 
