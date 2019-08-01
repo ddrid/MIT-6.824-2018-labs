@@ -171,77 +171,6 @@ type AppendEntriesReply struct {
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
 }
 
-//
-// example RequestVote RPC handler.
-//
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	DPrintf("No.%d received requestVote from No.%d", rf.me, args.CandidateId)
-
-	//过气选手，拒绝
-	if args.Term < rf.CurrentTerm {
-		reply.Term = rf.CurrentTerm
-		reply.VoteGranted = false
-		DPrintf("No.%d refused No.%d's requestVote because of the outdated term", rf.me, args.CandidateId)
-		return
-	}
-
-	//作用是将任期小的竞争者变成follower
-	if args.Term > rf.CurrentTerm {
-		rf.CurrentTerm = args.Term
-		rf.State = Follower
-		rf.VotedFor = -1
-	}
-
-	if rf.VotedFor == -1 {
-		rf.ResetElectionTimerCh <- true
-		rf.State = Follower
-		rf.VotedFor = args.CandidateId
-		reply.VoteGranted = true
-		DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
-	}
-
-	rf.persist()
-
-}
-
-func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-
-	DPrintf("No.%d has received heartbeat from the current leader No.%d",
-		rf.me, args.LeaderID)
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	if args.Term < rf.CurrentTerm {
-		reply.Term = rf.CurrentTerm
-		reply.Success = false
-		DPrintf("No.%d has refused heartbeat from the current leader No.%d because of the outdated term",
-			rf.me, args.LeaderID)
-		return
-	}
-	if rf.CurrentTerm < args.Term {
-		rf.CurrentTerm = args.Term
-	}
-
-	// 其他的leader，全部变成follower
-	if rf.State == Leader {
-		rf.State = Follower
-	}
-
-	// 未把票给该leader的follower
-	if rf.VotedFor != args.LeaderID {
-		rf.VotedFor = args.LeaderID
-	}
-
-	rf.ResetElectionTimerCh <- true
-
-	rf.persist()
-}
 
 //
 // example code to send a RequestVote RPC to a server.
@@ -364,7 +293,6 @@ func startElectionDaemon(rf *Raft) {
 				<-rf.ElectionTimer.C
 			}
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
-			DPrintf("No.%d's ElectionTimer has been reset", rf.me)
 
 
 		//选举计时器超时，自己成为竞选者
@@ -447,9 +375,48 @@ func changingIntoCandidate(rf *Raft) {
 	}
 }
 
+//
+// example RequestVote RPC handler.
+//
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+	// Your code here (2A, 2B).
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	DPrintf("No.%d received requestVote from No.%d", rf.me, args.CandidateId)
+
+	//过气选手，拒绝
+	if args.Term < rf.CurrentTerm {
+		reply.Term = rf.CurrentTerm
+		reply.VoteGranted = false
+		DPrintf("No.%d refused No.%d's requestVote because of the outdated term", rf.me, args.CandidateId)
+		return
+	}
+
+	//作用是将任期小的竞争者变成follower
+	if args.Term > rf.CurrentTerm {
+		rf.CurrentTerm = args.Term
+		rf.State = Follower
+		rf.VotedFor = -1
+	}
+
+	if rf.VotedFor == -1 {
+		rf.ResetElectionTimerCh <- true
+		rf.State = Follower
+		rf.VotedFor = args.CandidateId
+		reply.VoteGranted = true
+		DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
+	}
+
+	rf.persist()
+
+}
+
+
+
 func sendingHeartbeatDaemon(rf *Raft) {
 	for {
-		DPrintf("No.%d is ready to send heartbeat to all the peers", rf.me)
 		//不是leader了则不再发送心跳
 		rf.mu.Lock()
 		if rf.State != Leader {
@@ -490,4 +457,36 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		time.Sleep(time.Microsecond * 100)
 
 	}
+}
+
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.CurrentTerm {
+		reply.Term = rf.CurrentTerm
+		reply.Success = false
+		DPrintf("No.%d has refused heartbeat from the current leader No.%d because of the outdated term",
+			rf.me, args.LeaderID)
+		return
+	}
+	if rf.CurrentTerm < args.Term {
+		rf.CurrentTerm = args.Term
+	}
+
+	// 其他的leader，全部变成follower
+	if rf.State == Leader {
+		rf.State = Follower
+	}
+
+	// 未把票给该leader的follower
+	if rf.VotedFor != args.LeaderID {
+		rf.VotedFor = args.LeaderID
+	}
+
+	rf.ResetElectionTimerCh <- true
+
+	rf.persist()
 }
