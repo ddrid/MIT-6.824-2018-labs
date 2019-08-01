@@ -294,7 +294,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 func startElectionDaemon(rf *Raft) {
 
 	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
-	DPrintf("No.%d current state: %d",rf.State)
+	DPrintf("No.%d current state: %d",rf.me,rf.State)
 
 	for {
 		select {
