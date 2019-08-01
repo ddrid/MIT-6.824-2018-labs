@@ -84,9 +84,14 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
-	var isleader bool
+	var isLeader bool
 	// Your code here (2A).
-	return term, isleader
+	term = rf.CurrentTerm
+	if rf.State == Leader{
+		isLeader = true
+	}
+	isLeader = false
+	return term, isLeader
 }
 
 //
@@ -297,8 +302,8 @@ func startElectionDaemon(rf *Raft) {
 
 		//选举计时器超时，自己成为竞选者
 		case <-rf.ElectionTimer.C:
-			changingIntoCandidate(rf)
 			DPrintf("No.%d's ElectionTimer times out", rf.me)
+			changingIntoCandidate(rf)
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
 		}
 	}
