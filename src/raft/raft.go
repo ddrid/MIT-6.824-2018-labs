@@ -426,7 +426,7 @@ func changingIntoCandidate(rf *Raft) {
 
 				}
 			} else if reply.Term > requestVoteArgs.Term {
-				DPrintf("No.%d has quit because of there exists a leader of higher term")
+				DPrintf("No.%d has quit because of there exists a leader of higher term",rf.me)
 				//从别处得知已经存在更高任期的leader，自动退位成follower
 				rf.CurrentTerm = reply.Term
 				rf.State = Follower
