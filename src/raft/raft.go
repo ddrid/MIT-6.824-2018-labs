@@ -294,7 +294,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 func startElectionDaemon(rf *Raft) {
 
 	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
-	DPrintf("No.%d current state: %d",rf.me,rf.State)
 
 	for {
 		select {
@@ -448,6 +447,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 
 				if !rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
 					DPrintf("Current leader No.%d didn't received heartBeatReply from No.%d", rf.me, id)
+					DPrintf("No.%d state: %d", rf.me, rf.State)
 					return
 				}
 
@@ -459,7 +459,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.VotedFor = -1
 						rf.mu.Unlock()
 						rf.persist()
-						rf.ResetElectionTimerCh <- true
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
 					return
