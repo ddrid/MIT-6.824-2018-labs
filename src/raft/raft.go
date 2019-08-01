@@ -83,14 +83,17 @@ type Raft struct {
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
+	DPrintf("judging................")
 	var term int
 	var isLeader bool
 	// Your code here (2A).
+
 	term = rf.CurrentTerm
+	isLeader = false
 	if rf.State == Leader{
 		isLeader = true
 	}
-	isLeader = false
+	
 	return term, isLeader
 }
 
