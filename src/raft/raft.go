@@ -18,13 +18,13 @@ package raft
 //
 
 import (
+	"../labgob"
+	"../labrpc"
 	"bytes"
-	"encoding/gob"
 	"math/rand"
 	"sync"
 	"time"
 )
-import "../labrpc"
 
 // import "bytes"
 // import "labgob"
@@ -51,6 +51,11 @@ const (
 	Candidate
 	Leader
 )
+
+//300-500ms
+func randomElectionTimeInterval() time.Duration {
+	return time.Millisecond * time.Duration(300+rand.Intn(50)*4)
+}
 
 //
 // A Go object implementing a single Raft peer.
@@ -93,7 +98,7 @@ func (rf *Raft) persist() {
 	// Your code here (2C).
 
 	w := new(bytes.Buffer)
-	e := gob.NewEncoder(w)
+	e := labgob.NewEncoder(w)
 
 	e.Encode(rf.CurrentTerm)
 	e.Encode(rf.VotedFor)
@@ -124,6 +129,11 @@ func (rf *Raft) readPersist(data []byte) {
 	// }
 }
 
+type LogEntry struct {
+	Term    int
+	Command interface{}
+}
+
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -146,11 +156,91 @@ type RequestVoteReply struct {
 	VoteGranted bool //是否同意投该候选者
 }
 
+// Log Replication and HeartBeat
+type AppendEntriesArgs struct {
+	Term         int        // leader's term
+	LeaderID     int        // so follower can redirect clients
+	PrevLogIndex int        // index of log entry immediately preceding new ones
+	PrevLogTerm  int        // term of prevLogIndex entry
+	Entries      []LogEntry // log entries to store(empty for heartbeat; may send more than one for efficiency)
+	LeaderCommit int        // leader's commitIndex
+}
+
+type AppendEntriesReply struct {
+	Term    int  // currentTerm, for leader to update itself
+	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
+}
+
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	DPrintf("No.%d received requestVote from No.%d", rf.me, args.CandidateId)
+
+	//过气选手，拒绝
+	if args.Term < rf.CurrentTerm {
+		reply.Term = rf.CurrentTerm
+		reply.VoteGranted = false
+		DPrintf("No.%d refused No.%d's requestVote because of the outdated term", rf.me, args.CandidateId)
+		return
+	}
+
+	//作用是将任期小的竞争者变成follower
+	if args.Term > rf.CurrentTerm {
+		rf.CurrentTerm = args.Term
+		rf.State = Follower
+		rf.VotedFor = -1
+	}
+
+	if rf.VotedFor == -1 {
+		rf.ResetElectionTimerCh <- true
+		rf.State = Follower
+		rf.VotedFor = args.CandidateId
+		reply.VoteGranted = true
+		DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
+	}
+
+	rf.persist()
+
+}
+
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+	DPrintf("No.%d has received heartbeat from the current leader No.%d",
+		rf.me, args.LeaderID)
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.CurrentTerm {
+		reply.Term = rf.CurrentTerm
+		reply.Success = false
+		DPrintf("No.%d has refused heartbeat from the current leader No.%d because of the outdated term",
+			rf.me, args.LeaderID)
+		return
+	}
+	if rf.CurrentTerm < args.Term {
+		rf.CurrentTerm = args.Term
+	}
+
+	// 其他的leader，全部变成follower
+	if rf.State == Leader {
+		rf.State = Follower
+	}
+
+	// 未把票给该leader的follower
+	if rf.VotedFor != args.LeaderID {
+		rf.VotedFor = args.LeaderID
+	}
+
+	rf.ResetElectionTimerCh <- true
+
+	rf.persist()
 }
 
 //
@@ -184,6 +274,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	return ok
+}
+
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 
@@ -244,8 +339,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.State = Follower
 	rf.VotedFor = -1
 
-	//300-500ms
-	rf.ElectionTimer = time.NewTimer(time.Millisecond * time.Duration(300+rand.Intn(50)*4))
+	rf.ElectionTimer = time.NewTimer(randomElectionTimeInterval())
 	rf.ResetElectionTimerCh = make(chan bool)
 
 	//开始参与竞选
@@ -259,16 +353,18 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 //关于竞选事务的守护进程
 func startElectionDaemon(rf *Raft) {
+
+	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
+
 	for {
 		select {
-
 		//重置计时器
 		case <-rf.ResetElectionTimerCh:
 			if !rf.ElectionTimer.Stop() {
 				<-rf.ElectionTimer.C
 			}
-			//150-300ms
-			rf.ElectionTimer.Reset(time.Millisecond * time.Duration(300+rand.Intn(50)*4))
+			rf.ElectionTimer.Reset(randomElectionTimeInterval())
+			DPrintf("No.%d's ElectionTimer times out", rf.me)
 
 		//选举计时器超时，自己成为竞选者
 		case <-rf.ElectionTimer.C:
@@ -279,6 +375,8 @@ func startElectionDaemon(rf *Raft) {
 
 //Follower计时器超时，转变为Candidate
 func changingIntoCandidate(rf *Raft) {
+
+	DPrintf("No.%d has become a candidate", rf.me)
 
 	var requestVoteArgs RequestVoteArgs
 
@@ -320,15 +418,16 @@ func changingIntoCandidate(rf *Raft) {
 			//收到同意票
 			if reply.VoteGranted {
 				votes++
+				DPrintf("No.%d got one vote, current amount of votes: %d", rf.me, votes)
 				if votes > len(rf.peers)/2 {
 					rf.State = Leader
-
-
+					DPrintf("No.%d has become the new leader, term: %d", rf.me, rf.CurrentTerm)
+					go sendingHeartbeatDaemon(rf)
 
 				}
-			}
-			//从别处得知已经存在更高任期的leader，自动退位成follower
-			if reply.Term > requestVoteArgs.Term {
+			} else if reply.Term > requestVoteArgs.Term {
+				DPrintf("No.%d has quit because of there exists a leader of higher term")
+				//从别处得知已经存在更高任期的leader，自动退位成follower
 				rf.CurrentTerm = reply.Term
 				rf.State = Follower
 				rf.VotedFor = -1
@@ -341,6 +440,47 @@ func changingIntoCandidate(rf *Raft) {
 			rf.mu.Unlock()
 
 		}(id)
+
+	}
+}
+
+func sendingHeartbeatDaemon(rf *Raft) {
+	for {
+		DPrintf("No.%d is ready to send heartbeat to all the peers", rf.me)
+		//不是leader了则不再发送心跳
+		rf.mu.Lock()
+		if rf.State != Leader {
+			rf.mu.Unlock()
+			return
+		}
+		rf.mu.Unlock()
+
+		rf.ResetElectionTimerCh <- true
+		for id := 0; id < len(rf.peers); id++ {
+			if id == rf.me {
+				continue
+			}
+			go func(id int) {
+				var appendEntriesArgs AppendEntriesArgs
+				var reply AppendEntriesReply
+				if rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
+					if reply.Success != true {
+						if reply.Term > rf.CurrentTerm {
+							rf.mu.Lock()
+							rf.CurrentTerm = reply.Term
+							rf.State = Follower
+							rf.VotedFor = -1
+							rf.mu.Unlock()
+							DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
+						}
+					}
+				}
+
+			}(id)
+		}
+
+		//heartbeatInterval
+		time.Sleep(time.Microsecond * 100)
 
 	}
 }
