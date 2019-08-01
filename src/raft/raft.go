@@ -364,11 +364,14 @@ func startElectionDaemon(rf *Raft) {
 				<-rf.ElectionTimer.C
 			}
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
-			DPrintf("No.%d's ElectionTimer times out", rf.me)
+			DPrintf("No.%d's ElectionTimer has been reset", rf.me)
+
 
 		//选举计时器超时，自己成为竞选者
 		case <-rf.ElectionTimer.C:
 			changingIntoCandidate(rf)
+			DPrintf("No.%d's ElectionTimer times out", rf.me)
+			rf.ElectionTimer.Reset(randomElectionTimeInterval())
 		}
 	}
 }
