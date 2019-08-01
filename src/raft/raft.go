@@ -457,8 +457,11 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.State = Follower
 						rf.VotedFor = -1
 						rf.mu.Unlock()
+						rf.persist()
+						rf.ResetElectionTimerCh <- true
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
+					return
 				}
 
 			}(id)
