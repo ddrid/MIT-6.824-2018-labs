@@ -295,7 +295,7 @@ func startElectionDaemon(rf *Raft) {
 
 	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
 	DPrintf("No.%d current state: %d",rf.State)
-	
+
 	for {
 		select {
 		//重置计时器
