@@ -496,6 +496,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.VotedFor = args.LeaderID
 	}
 
+	reply.Success = true
+	reply.Term = rf.CurrentTerm
+
 	rf.ResetElectionTimerCh <- true
 
 	rf.persist()
