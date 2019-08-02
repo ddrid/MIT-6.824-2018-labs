@@ -302,7 +302,6 @@ func startElectionDaemon(rf *Raft) {
 				<-rf.ElectionTimer.C
 			}
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
-			DPrintf("No.%d ElectionTimer reset",rf.me)
 
 
 		//选举计时器超时，自己成为竞选者
@@ -434,12 +433,15 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		rf.mu.Unlock()
 
 		rf.ResetElectionTimerCh <- true
+		DPrintf("No.%d ElectionTimer has been reset because it's ready to send heartbeat to all peers",rf.me)
+
 
 		for id := 0; id < len(rf.peers); id++ {
 			if id == rf.me {
 				continue
 			}
 			go func(id int) {
+				DPrintf("Leader ready to send heart beat to follower No.%d",id)
 				var appendEntriesArgs AppendEntriesArgs
 				var reply AppendEntriesReply
 
