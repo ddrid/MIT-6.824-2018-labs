@@ -214,8 +214,13 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+var tempCount = 0
+
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	DPrintf("Sending heart beat to No.%d.......count:%d", server, tempCount)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	DPrintf("over.................count:%d", tempCount)
+	tempCount++
 	return ok
 }
 
@@ -433,20 +438,20 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		rf.mu.Unlock()
 
 		rf.ResetElectionTimerCh <- true
-		DPrintf("No.%d ElectionTimer has been reset because it's ready to send heartbeat to all peers",rf.me)
-
+		DPrintf("No.%d ElectionTimer has been reset because it's ready to send heartbeat to all peers", rf.me)
 
 		for id := 0; id < len(rf.peers); id++ {
 			if id == rf.me {
 				continue
 			}
 			go func(id int) {
-				DPrintf("Leader ready to send heart beat to follower No.%d",id)
 				var appendEntriesArgs AppendEntriesArgs
 				var reply AppendEntriesReply
 
 				appendEntriesArgs.Term = rf.CurrentTerm
 				appendEntriesArgs.LeaderID = rf.me
+
+				DPrintf("Leader ready to send heart beat to follower No.%d", id)
 
 				isReceived := rf.sendAppendEntries(id, &appendEntriesArgs, &reply)
 				if !isReceived {
