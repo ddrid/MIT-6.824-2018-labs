@@ -468,7 +468,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		}
 
 		//heartbeatInterval
-		time.Sleep(time.Microsecond * 100)
+		time.Sleep(time.Millisecond * 100)
 
 	}
 }
