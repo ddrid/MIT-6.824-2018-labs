@@ -22,7 +22,6 @@ import (
 	"../labrpc"
 	"bytes"
 	"math/rand"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -219,7 +218,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	DPrintf("Sending heart beat to No.%d.......", server)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	DPrintf("over.................ok = "+strconv.FormatBool(ok))
+	DPrintf("over.................ok = %d",ok)
 	return ok
 }
 
