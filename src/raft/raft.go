@@ -302,6 +302,7 @@ func startElectionDaemon(rf *Raft) {
 				<-rf.ElectionTimer.C
 			}
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
+			DPrintf("No.%d ElectionTimer reset",rf.me)
 
 
 		//选举计时器超时，自己成为竞选者
@@ -445,14 +446,14 @@ func sendingHeartbeatDaemon(rf *Raft) {
 				appendEntriesArgs.Term = rf.CurrentTerm
 				appendEntriesArgs.LeaderID = rf.me
 
-				if !rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
+				isReceived := rf.sendAppendEntries(id, &appendEntriesArgs, &reply)
+				if !isReceived {
 					DPrintf("Current leader No.%d didn't received heartBeatReply from No.%d", rf.me, id)
 					return
 				}
 
 				rf.mu.Lock()
-				if rf.State != Leader{
-					DPrintf("???????????")
+				if rf.State != Leader {
 					rf.mu.Unlock()
 					return
 				}
@@ -468,7 +469,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
-				}else{
+				} else {
 					DPrintf("Current leader No.%d has received heartBeatReply from No.%d", rf.me, id)
 				}
 			}(id)
@@ -511,6 +512,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.ResetElectionTimerCh <- true
 
-	DPrintf("No.%d received heartbeat from the leader",rf.me)
+	DPrintf("No.%d received heartbeat from the leader", rf.me)
 	rf.persist()
 }
