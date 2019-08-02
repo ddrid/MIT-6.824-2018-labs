@@ -434,6 +434,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		rf.mu.Unlock()
 
 		rf.ResetElectionTimerCh <- true
+
 		for id := 0; id < len(rf.peers); id++ {
 			if id == rf.me {
 				continue
@@ -447,7 +448,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 
 				if !rf.sendAppendEntries(id, &appendEntriesArgs, &reply) {
 					DPrintf("Current leader No.%d didn't received heartBeatReply from No.%d", rf.me, id)
-					DPrintf("No.%d state: %d", rf.me, rf.State)
 					return
 				}
 
@@ -461,7 +461,8 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
-					return
+				}else{
+					DPrintf("Current leader No.%d has received heartBeatReply from No.%d", rf.me, id)
 				}
 			}(id)
 		}
