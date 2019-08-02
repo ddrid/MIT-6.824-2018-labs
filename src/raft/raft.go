@@ -451,7 +451,15 @@ func sendingHeartbeatDaemon(rf *Raft) {
 					return
 				}
 
-				if reply.Success != true {
+				rf.mu.Lock()
+				if rf.State != Leader{
+					DPrintf("???????????")
+					rf.mu.Unlock()
+					return
+				}
+				rf.mu.Unlock()
+
+				if !reply.Success {
 					if reply.Term > rf.CurrentTerm {
 						rf.mu.Lock()
 						rf.CurrentTerm = reply.Term
@@ -461,6 +469,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
+					DPrintf("heartReply has failed because of unknown reasons")
 				}else{
 					DPrintf("Current leader No.%d has received heartBeatReply from No.%d", rf.me, id)
 				}
@@ -468,7 +477,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		}
 
 		//heartbeatInterval
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(time.Millisecond * time.Duration(100))
 
 	}
 }
@@ -504,5 +513,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.ResetElectionTimerCh <- true
 
+	DPrintf("No.%d received heartbeat from the leader",rf.me)
 	rf.persist()
 }
