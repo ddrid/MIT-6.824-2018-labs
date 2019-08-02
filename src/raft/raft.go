@@ -52,10 +52,12 @@ const (
 	Leader
 )
 
-//300-500ms
+//400-800ms
 func randomElectionTimeInterval() time.Duration {
-	return time.Millisecond * time.Duration(300+rand.Intn(50)*4)
+	return time.Millisecond * time.Duration(400+rand.Intn(50)*8)
 }
+
+const heartbeatInterval = time.Millisecond * time.Duration(100)
 
 //
 // A Go object implementing a single Raft peer.
@@ -92,11 +94,7 @@ func (rf *Raft) GetState() (int, bool) {
 	defer rf.mu.Unlock()
 
 	term = rf.CurrentTerm
-	isLeader = false
-	if rf.State == Leader {
-		isLeader = true
-	}
-
+	isLeader = rf.State == Leader
 	return term, isLeader
 }
 
@@ -470,7 +468,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
-					DPrintf("heartReply has failed because of unknown reasons")
 				}else{
 					DPrintf("Current leader No.%d has received heartBeatReply from No.%d", rf.me, id)
 				}
@@ -478,7 +475,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		}
 
 		//heartbeatInterval
-		time.Sleep(time.Millisecond * time.Duration(200))
+		time.Sleep(heartbeatInterval)
 
 	}
 }
