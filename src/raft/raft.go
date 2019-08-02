@@ -18,9 +18,7 @@ package raft
 //
 
 import (
-	"../labgob"
 	"../labrpc"
-	"bytes"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -107,14 +105,14 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (2C).
 
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-
-	e.Encode(rf.CurrentTerm)
-	e.Encode(rf.VotedFor)
-
-	data := w.Bytes()
-	rf.persister.SaveRaftState(data)
+	//w := new(bytes.Buffer)
+	//e := labgob.NewEncoder(w)
+	//
+	//e.Encode(rf.CurrentTerm)
+	//e.Encode(rf.VotedFor)
+	//
+	//data := w.Bytes()
+	//rf.persister.SaveRaftState(data)
 }
 
 //
@@ -333,7 +331,7 @@ func changingIntoCandidate(rf *Raft) {
 	rf.mu.Unlock()
 
 	//该竞选者得票数
-	votes := 0
+	votes := 1
 
 	for id := 0; id < len(rf.peers); id++ {
 		if id == rf.me {
@@ -375,8 +373,6 @@ func changingIntoCandidate(rf *Raft) {
 				rf.CurrentTerm = reply.Term
 				rf.State = Follower
 				rf.VotedFor = -1
-				//关键的状态部分改完后进行持久化，以便灾后恢复
-				rf.persist()
 				//重置选举计时器
 				rf.ResetElectionTimerCh <- true
 			}
@@ -422,7 +418,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
 	}
 
-	rf.persist()
 
 }
 
@@ -472,7 +467,6 @@ func sendingHeartbeatDaemon(rf *Raft) {
 						rf.State = Follower
 						rf.VotedFor = -1
 						rf.mu.Unlock()
-						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					}
 				} else {
@@ -521,5 +515,4 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.ResetElectionTimerCh <- true
 
 	DPrintf("No.%d received heartbeat from the leader", rf.me)
-	rf.persist()
 }
