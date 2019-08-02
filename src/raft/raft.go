@@ -253,6 +253,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
+
 }
 
 //
@@ -477,7 +478,7 @@ func sendingHeartbeatDaemon(rf *Raft) {
 		}
 
 		//heartbeatInterval
-		time.Sleep(time.Millisecond * time.Duration(100))
+		time.Sleep(time.Millisecond * time.Duration(200))
 
 	}
 }
