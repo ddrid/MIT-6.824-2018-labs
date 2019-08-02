@@ -214,13 +214,11 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-var tempCount = 0
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	DPrintf("Sending heart beat to No.%d.......count:%d", server, tempCount)
+	DPrintf("Sending heart beat to No.%d.......", server)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	DPrintf("over.................count:%d", tempCount)
-	tempCount++
+	DPrintf("over.................ok = %d",ok)
 	return ok
 }
 
@@ -489,6 +487,8 @@ func sendingHeartbeatDaemon(rf *Raft) {
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+	DPrintf("Entered No.%d AppendEntries",rf.me)
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
