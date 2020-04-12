@@ -63,15 +63,14 @@ func doMap(
 		log.Fatal(err)
 	}
 
-	//用户传入的mapF函数将读取的文件转换成键值对
+	//用户传入的mapF函数将读取的文件转换成键值对数组
 	kvPairs := mapF(inFile, string(fileContent))
 
 	//生成中间文件切片
-	intermediateFiles := make([] *os.File, nReduce)
+	intermediateFiles := make([]*os.File, nReduce)
 
-	//用于将kvPairs转换成json后写入中间文件的encoder
-	filesEncoder := make([] *json.Encoder, nReduce)
-
+	//用于将kvPairs转换成json后写入中间文件
+	filesEncoder := make([]*json.Encoder, nReduce)
 
 	//此处nReduce指将同一个文件分散到nReduce个不同的reduceTask
 	for i := 0; i < nReduce; i++ {
