@@ -52,17 +52,14 @@ func doReduce(
 	// Your code here (Part I).
 	//
 
-
 	//用于排序后按序写入新文件
 	var keys []string
 
 	//具有相同key的value归类到一起
 	var kvPairs = make(map[string][]string)
 
-
 	//此处nMap指的是由nMap个不同的mapTask处理后的中间文件(原先就不是同一个文件)
 	for i := 0; i < nMap; i++ {
-
 		//打开存储中间数据的文件
 		intermediateFile, err := os.Open(reduceName(jobName, i, reduceTask))
 		if err != nil {
@@ -95,7 +92,6 @@ func doReduce(
 	defer out.Close()
 
 	outFileEncoder := json.NewEncoder(out)
-
 
 	//将kvPairs中的value聚合成一个value，再和原先的key组合，写入最终的结果文件
 	for _, key := range keys {
