@@ -324,7 +324,7 @@ func (rf *Raft) changingIntoCandidate() {
 	rf.mu.Unlock()
 
 	//该竞选者得票数
-	votes := 1
+	receivedVotes := 1
 
 	for id := 0; id < len(rf.peers); id++ {
 		if id == rf.me {
@@ -334,8 +334,8 @@ func (rf *Raft) changingIntoCandidate() {
 		//对每一个peer开启一个go程，发送RequestVote并处理reply
 		go func(id int) {
 			var reply RequestVoteReply
-			isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply)
-			if !isReceived {
+
+			if isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply); !isReceived {
 				DPrintf("Candidate No.%d didn't receive reply from Peer%d ", rf.me, id)
 				return
 			}
@@ -352,9 +352,9 @@ func (rf *Raft) changingIntoCandidate() {
 
 			//收到同意票
 			if reply.VoteGranted {
-				votes++
-				DPrintf("No.%d got one vote, current number of votes: %d", rf.me, votes)
-				if votes > len(rf.peers)/2 {
+				receivedVotes++
+				DPrintf("No.%d got one vote, current number of receivedVotes: %d", rf.me, receivedVotes)
+				if receivedVotes > len(rf.peers)/2 {
 					rf.State = Leader
 					DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
 					go rf.sendingHeartbeatDaemon()
@@ -413,14 +413,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 }
 
-func (rf *Raft)sendingHeartbeatDaemon() {
+func (rf *Raft) sendingHeartbeatDaemon() {
 	for {
-		//不是leader了则不再发送心跳
 		rf.mu.Lock()
+
+		//不是leader了则不再发送心跳
 		if rf.State != Leader {
 			rf.mu.Unlock()
 			return
 		}
+
 		rf.mu.Unlock()
 
 		rf.ResetElectionTimerCh <- true
