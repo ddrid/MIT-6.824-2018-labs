@@ -24,9 +24,6 @@ import (
 	"time"
 )
 
-// import "bytes"
-// import "labgob"
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -279,7 +276,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.ResetElectionTimerCh = make(chan bool)
 
 	//开始参与竞选
-	go startElectionDaemon(rf)
+	go rf.startElectionDaemon()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
@@ -288,7 +285,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 //关于竞选事务的守护进程
-func startElectionDaemon(rf *Raft) {
+func (rf *Raft) startElectionDaemon() {
 
 	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
 
@@ -305,14 +302,14 @@ func startElectionDaemon(rf *Raft) {
 		//选举计时器超时，自己成为竞选者
 		case <-rf.ElectionTimer.C:
 			DPrintf("No.%d's ElectionTimer times out", rf.me)
-			changingIntoCandidate(rf)
+			rf.changingIntoCandidate()
 			rf.ElectionTimer.Reset(randomElectionTimeInterval())
 		}
 	}
 }
 
 //Follower计时器超时，转变为Candidate
-func changingIntoCandidate(rf *Raft) {
+func (rf *Raft) changingIntoCandidate() {
 
 	DPrintf("No.%d has become a candidate", rf.me)
 
@@ -320,7 +317,7 @@ func changingIntoCandidate(rf *Raft) {
 
 	rf.mu.Lock()
 	rf.VotedFor = rf.me
-	rf.CurrentTerm += 1
+	rf.CurrentTerm++
 	rf.State = Candidate
 	requestVoteArgs.Term = rf.CurrentTerm
 	requestVoteArgs.CandidateId = rf.me
@@ -360,7 +357,7 @@ func changingIntoCandidate(rf *Raft) {
 				if votes > len(rf.peers)/2 {
 					rf.State = Leader
 					DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
-					go sendingHeartbeatDaemon(rf)
+					go rf.sendingHeartbeatDaemon()
 
 				}
 			} else if reply.Term > requestVoteArgs.Term {
@@ -416,7 +413,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 }
 
-func sendingHeartbeatDaemon(rf *Raft) {
+func (rf *Raft)sendingHeartbeatDaemon() {
 	for {
 		//不是leader了则不再发送心跳
 		rf.mu.Lock()
