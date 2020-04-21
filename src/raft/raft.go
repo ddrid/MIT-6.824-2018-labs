@@ -291,8 +291,10 @@ func (rf *Raft) startElectionDaemon() {
 
 	for {
 		select {
-		//重置计时器
+		//需要重置计时器
 		case <-rf.ResetElectionTimerCh:
+			// To ensure the channel is empty after a call to Stop, check the
+			// return value and drain the channel.
 			if !rf.ElectionTimer.Stop() {
 				<-rf.ElectionTimer.C
 			}
@@ -358,7 +360,6 @@ func (rf *Raft) changingIntoCandidate() {
 					rf.State = Leader
 					DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
 					go rf.sendingHeartbeatDaemon()
-
 				}
 			} else if reply.Term > requestVoteArgs.Term {
 				DPrintf("No.%d has quit because of there exists a leader of higher term", rf.me)
