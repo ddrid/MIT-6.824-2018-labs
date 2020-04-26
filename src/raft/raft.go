@@ -47,6 +47,20 @@ const (
 	Leader
 )
 
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a int, b int) int {
+	if a > b {
+		return b
+	}
+	return a
+}
+
 //400-800ms
 func randomElectionTimeInterval() time.Duration {
 	return time.Millisecond * time.Duration(400+rand.Intn(50)*8)
@@ -67,8 +81,15 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	CurrentTerm int //当前服务器被最近一任leader通知的term，单调递增
-	VotedFor    int //投给了谁
+	CurrentTerm int        //当前服务器被最近一任leader通知的term，单调递增
+	VotedFor    int        //投给了谁
+	log         []LogEntry //日志
+
+	commitIndex int //目前已经commit的最后一条日志index
+	lastApplied int //目前已经apply的最后一条日志index
+
+	nextIndex  []int //每个节点即将为其发送的下一个日志记录的 index（初值均为 Leader 最新日志记录 index 值 + 1）
+	matchIndex []int //每个节点上已备份的最后一条日志记录的 index（初值均为 0）
 
 	ElectionTimer        *time.Timer //选举计时器
 	ResetElectionTimerCh chan bool   //用于重置选举计时器
@@ -134,6 +155,7 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 type LogEntry struct {
+	Index   int
 	Term    int
 	Command interface{}
 }
@@ -428,18 +450,24 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 
 		rf.ResetElectionTimerCh <- true
 
-		for id := 0; id < len(rf.peers); id++ {
+		for id := range rf.peers {
 			if id == rf.me {
 				continue
 			}
 			go func(id int) {
-				var appendEntriesArgs AppendEntriesArgs
+				rf.mu.Lock()
+				args := AppendEntriesArgs{
+					Term:         rf.CurrentTerm,
+					LeaderID:     rf.me,
+					PrevLogIndex: rf.matchIndex[id],
+					PrevLogTerm:  rf.log[rf.matchIndex[id]].Term,
+					Entries:      rf.log[rf.matchIndex[id]:],
+					LeaderCommit: rf.commitIndex}
+				rf.mu.Unlock()
+
 				var reply AppendEntriesReply
 
-				appendEntriesArgs.Term = rf.CurrentTerm
-				appendEntriesArgs.LeaderID = rf.me
-
-				isReceived := rf.sendAppendEntries(id, &appendEntriesArgs, &reply)
+				isReceived := rf.sendAppendEntries(id, &args, &reply)
 				if !isReceived {
 					DPrintf("Current leader No.%d didn't received heartBeatReply from No.%d", rf.me, id)
 					return
@@ -450,22 +478,22 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 					rf.mu.Unlock()
 					return
 				}
-				rf.mu.Unlock()
-
 				if !reply.Success {
 					if reply.Term > rf.CurrentTerm {
-						rf.mu.Lock()
 						rf.CurrentTerm = reply.Term
 						rf.State = Follower
 						rf.VotedFor = -1
-						rf.mu.Unlock()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
+					} else {
+						rf.nextIndex[id]--
 					}
+				} else {
+					rf.matchIndex[id] = len(rf.log)
 				}
+				rf.mu.Unlock()
 			}(id)
 		}
 
-		//heartbeatInterval
 		time.Sleep(heartbeatInterval)
 
 	}
@@ -476,30 +504,44 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	reply.Term = rf.CurrentTerm
+
+	reply.Success = false
+
+	//存在任期更高的leader
 	if args.Term < rf.CurrentTerm {
-		reply.Term = rf.CurrentTerm
-		reply.Success = false
 		DPrintf("No.%d has refused heartbeat from the current leader No.%d because of the outdated term",
 			rf.me, args.LeaderID)
 		return
 	}
-	if rf.CurrentTerm < args.Term {
-		rf.CurrentTerm = args.Term
-	}
 
-	// 其他的leader，全部变成follower
-	if rf.State == Leader {
-		rf.State = Follower
-	}
+	//更新当前节点任期
+	rf.CurrentTerm = args.Term
+	// 变成follower（防止此人是旧leader）
+	rf.State = Follower
+	// 未把票给该leader的follower将votedFor置为该leader
+	rf.VotedFor = args.LeaderID
 
-	// 未把票给该leader的follower
-	if rf.VotedFor != args.LeaderID {
-		rf.VotedFor = args.LeaderID
-	}
-
-	reply.Success = true
 	reply.Term = rf.CurrentTerm
 
 	rf.ResetElectionTimerCh <- true
+
+	//本地日志长度小于PrevLogIndex（应该相等）
+	if args.PrevLogIndex > len(rf.log) {
+		return
+	}
+
+	//任期不匹配
+	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+		return
+	}
+
+	//AppendEntries失败的情况在这之上已处理完，以下全为成功
+	reply.Success = true
+
+	//PrevLogIndex之后的直接全部替换
+	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries[:]...)
+
+	rf.commitIndex = min(args.LeaderCommit, len(rf.log))
 
 }
