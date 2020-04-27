@@ -379,9 +379,7 @@ func (rf *Raft) changingIntoCandidate() {
 				receivedVotes++
 				DPrintf("No.%d got one vote, current number of receivedVotes: %d", rf.me, receivedVotes)
 				if receivedVotes > len(rf.peers)/2 {
-					rf.State = Leader
-					DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
-					go rf.sendingHeartbeatDaemon()
+					rf.changingIntoLeader()
 				}
 			} else if reply.Term > requestVoteArgs.Term {
 				DPrintf("No.%d has quit because of there exists a leader of higher term", rf.me)
@@ -398,6 +396,16 @@ func (rf *Raft) changingIntoCandidate() {
 		}(id)
 
 	}
+}
+
+func (rf *Raft) changingIntoLeader() {
+	rf.State = Leader
+	DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
+	for id := range rf.peers {
+		rf.matchIndex[id] = 0
+		rf.nextIndex[id] = len(rf.log)
+	}
+	go rf.sendingHeartbeatDaemon()
 }
 
 //
@@ -459,9 +467,9 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 				args := AppendEntriesArgs{
 					Term:         rf.CurrentTerm,
 					LeaderID:     rf.me,
-					PrevLogIndex: rf.matchIndex[id],
-					PrevLogTerm:  rf.log[rf.matchIndex[id]].Term,
-					Entries:      rf.log[rf.matchIndex[id]:],
+					PrevLogIndex: rf.nextIndex[id] - 1,
+					PrevLogTerm:  rf.log[rf.nextIndex[id]-1].Term,
+					Entries:      rf.log[rf.nextIndex[id]:],
 					LeaderCommit: rf.commitIndex}
 				rf.mu.Unlock()
 
@@ -528,6 +536,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//本地日志长度小于PrevLogIndex（应该相等）
 	if args.PrevLogIndex > len(rf.log) {
+		//直接拒绝，待优化
+		return
+	}
+	//本地日志长度大于PrevLogIndex（应该相等）
+	if args.PrevLogIndex < len(rf.log) {
+		//将PrevLogIndex之后的删除
+		rf.log = rf.log[0:args.PrevLogIndex]
 		return
 	}
 
