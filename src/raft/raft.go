@@ -19,6 +19,7 @@ package raft
 
 import (
 	"../labrpc"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -93,8 +94,13 @@ type Raft struct {
 
 	ElectionTimer        *time.Timer //选举计时器
 	ResetElectionTimerCh chan bool   //用于重置选举计时器
+	applyCh              chan ApplyMsg
+	State                int //Follower,Candidate,Leader
+}
 
-	State int //Follower,Candidate,Leader
+func (rf *Raft) String() string {
+	return fmt.Sprintf("[%d; Term:%d; VotedFor:%d; logLen:%v; Commit:%v; Apply:%v]",
+		rf.me, rf.CurrentTerm, rf.VotedFor, len(rf.log), rf.commitIndex, rf.lastApplied)
 }
 
 // return currentTerm and whether this server
@@ -236,6 +242,10 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+func (rf *Raft) getLastLogIndex() int {
+	return len(rf.log) - 1
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -252,11 +262,20 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
 
+	term, isLeader := rf.GetState()
+	if isLeader == true {
+		rf.mu.Lock()
+
+		defer rf.mu.Unlock()
+
+		index = rf.getLastLogIndex() + 1
+		//DPrintf("index :%d", index)
+		rf.log = append(rf.log, LogEntry{Command: command, Term: term, Index: index})
+		DPrintf("successfully append log on leader No.%d", rf.me)
+		rf.persist()
+	}
 	return index, term, isLeader
 }
 
@@ -269,6 +288,26 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
 	rf.mu.Lock()
+}
+
+func (rf *Raft) ableToCommit(index int) bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	count := 1
+	if index > len(rf.log)-1 {
+		return false
+	}
+
+	for i := 0; i < len(rf.peers); i++ {
+		if i != rf.me && rf.matchIndex[i] >= index {
+			count++
+			if count > len(rf.peers)/2 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 //
@@ -297,6 +336,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.ElectionTimer = time.NewTimer(randomElectionTimeInterval())
 	rf.ResetElectionTimerCh = make(chan bool)
 
+	rf.log = make([]LogEntry, 1)
+	rf.CurrentTerm = 0
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.applyCh = applyCh
+
 	//开始参与竞选
 	go rf.startElectionDaemon()
 
@@ -304,6 +349,25 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	return rf
+}
+
+func (rf *Raft) applyLog() {
+	rf.mu.Lock()
+
+	defer rf.mu.Unlock()
+
+	if rf.commitIndex > rf.lastApplied {
+		for i := rf.lastApplied + 1; i < rf.commitIndex+1; i++ {
+			msg := ApplyMsg{
+				CommandIndex: i,
+				Command:      rf.log[i].Command,
+				CommandValid: true,
+			}
+			rf.applyCh <- msg
+			rf.lastApplied++
+			DPrintf("!!! No.%d applied !!!", rf.me)
+		}
+	}
 }
 
 //关于竞选事务的守护进程
@@ -400,10 +464,12 @@ func (rf *Raft) changingIntoCandidate() {
 
 func (rf *Raft) changingIntoLeader() {
 	rf.State = Leader
-	DPrintf("***No.%d has become the new leader, term: %d***", rf.me, rf.CurrentTerm)
+	DPrintf("***No.%d has become the new leader, term: %d*** ", rf.me, rf.CurrentTerm)
+	rf.matchIndex = make([]int, len(rf.peers))
+	rf.nextIndex = make([]int, len(rf.peers))
 	for id := range rf.peers {
 		rf.matchIndex[id] = 0
-		rf.nextIndex[id] = len(rf.log)
+		rf.nextIndex[id] = rf.getLastLogIndex()
 	}
 	go rf.sendingHeartbeatDaemon()
 }
@@ -467,10 +533,17 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 				args := AppendEntriesArgs{
 					Term:         rf.CurrentTerm,
 					LeaderID:     rf.me,
-					PrevLogIndex: rf.nextIndex[id] - 1,
-					PrevLogTerm:  rf.log[rf.nextIndex[id]-1].Term,
-					Entries:      rf.log[rf.nextIndex[id]:],
+					Entries:      nil,
 					LeaderCommit: rf.commitIndex}
+
+				nextIndex := rf.nextIndex[id]
+
+				//需要携带新entry
+				if nextIndex != 0 && nextIndex <= rf.getLastLogIndex() {
+					args.PrevLogIndex = rf.nextIndex[id] - 1
+					args.PrevLogTerm = rf.log[rf.nextIndex[id]-1].Term
+					args.Entries = rf.log[rf.nextIndex[id]:]
+				}
 				rf.mu.Unlock()
 
 				var reply AppendEntriesReply
@@ -493,15 +566,22 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 						rf.VotedFor = -1
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					} else {
+						DPrintf("No.%d nextIndex backward", id)
 						rf.nextIndex[id]--
 					}
 				} else {
-					rf.matchIndex[id] = len(rf.log)
+					rf.matchIndex[id] = rf.getLastLogIndex()
+					rf.nextIndex[id] = rf.getLastLogIndex() + 1
 				}
 				rf.mu.Unlock()
 			}(id)
 		}
-
+		if rf.ableToCommit(rf.commitIndex + 1) {
+			rf.mu.Lock()
+			rf.commitIndex++
+			rf.mu.Unlock()
+			go rf.applyLog()
+		}
 		time.Sleep(heartbeatInterval)
 
 	}
@@ -534,15 +614,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	rf.ResetElectionTimerCh <- true
 
-	//本地日志长度小于PrevLogIndex（应该相等）
-	if args.PrevLogIndex > len(rf.log) {
-		//直接拒绝，待优化
+	//just heartbeat
+	if args.Entries == nil {
+		DPrintf("get heartbeat")
+		reply.Success = true
+		rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
+		go rf.applyLog()
 		return
 	}
-	//本地日志长度大于PrevLogIndex（应该相等）
-	if args.PrevLogIndex < len(rf.log) {
-		//将PrevLogIndex之后的删除
-		rf.log = rf.log[0:args.PrevLogIndex]
+
+	//本地日志缺失
+	if args.PrevLogIndex > rf.getLastLogIndex() {
+		//直接拒绝，待优化
+		DPrintf("本地日志缺失")
 		return
 	}
 
@@ -553,10 +637,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//AppendEntries失败的情况在这之上已处理完，以下全为成功
 	reply.Success = true
-
 	//PrevLogIndex之后的直接全部替换
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries[:]...)
-
-	rf.commitIndex = min(args.LeaderCommit, len(rf.log))
-
+	DPrintf("Successfully append to follower %d, current lastIndex: %d", rf.me, rf.getLastLogIndex())
+	rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
+	go rf.applyLog()
 }
