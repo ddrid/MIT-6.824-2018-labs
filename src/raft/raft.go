@@ -99,8 +99,8 @@ type Raft struct {
 }
 
 func (rf *Raft) String() string {
-	return fmt.Sprintf("[%d; Term:%d; VotedFor:%d; logLen:%v; Commit:%v; Apply:%v]",
-		rf.me, rf.CurrentTerm, rf.VotedFor, len(rf.log), rf.commitIndex, rf.lastApplied)
+	return fmt.Sprintf("Index: %d, Term: %d, lastIndex: %d, lastTerm: %d,  commitIndex: %v, lastApplied:%v",
+		rf.me, rf.CurrentTerm, rf.getLastLogIndex(), rf.log[rf.getLastLogIndex()].Term, rf.commitIndex, rf.lastApplied)
 }
 
 // return currentTerm and whether this server
@@ -273,7 +273,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = rf.getLastLogIndex() + 1
 		//DPrintf("index :%d", index)
 		rf.log = append(rf.log, LogEntry{Command: command, Term: term, Index: index})
-		DPrintf("successfully append log on leader No.%d", rf.me)
+		DPrintf("Append to leader No.%d, lastIndex: %d", rf.me, index)
 		rf.persist()
 	}
 	return index, term, isLeader
@@ -365,15 +365,13 @@ func (rf *Raft) applyLog() {
 			}
 			rf.applyCh <- msg
 			rf.lastApplied++
-			DPrintf("!!! No.%d applied !!!", rf.me)
+			DPrintf("!!! No.%d applied, lastApplied: %d !!!", rf.me, rf.lastApplied)
 		}
 	}
 }
 
 //关于竞选事务的守护进程
 func (rf *Raft) startElectionDaemon() {
-
-	DPrintf("No.%d has entered startElectionDaemon successfully", rf.me)
 
 	for {
 		select {
@@ -401,15 +399,20 @@ func (rf *Raft) changingIntoCandidate() {
 
 	DPrintf("No.%d has become a candidate", rf.me)
 
-	var requestVoteArgs RequestVoteArgs
-
 	rf.mu.Lock()
 	rf.VotedFor = rf.me
 	rf.CurrentTerm++
 	rf.State = Candidate
-	requestVoteArgs.Term = rf.CurrentTerm
-	requestVoteArgs.CandidateId = rf.me
 	rf.mu.Unlock()
+
+	args := RequestVoteArgs{
+		Term:         rf.CurrentTerm,
+		CandidateId:  rf.me,
+		LastLogIndex: rf.getLastLogIndex(),
+		LastLogTerm:  rf.log[rf.getLastLogIndex()].Term,
+	}
+
+	DPrintf("status: %s", rf)
 
 	//该竞选者得票数
 	receivedVotes := 1
@@ -423,7 +426,7 @@ func (rf *Raft) changingIntoCandidate() {
 		go func(id int) {
 			var reply RequestVoteReply
 
-			if isReceived := rf.sendRequestVote(id, &requestVoteArgs, &reply); !isReceived {
+			if isReceived := rf.sendRequestVote(id, &args, &reply); !isReceived {
 				DPrintf("Candidate No.%d didn't receive reply from Peer%d ", rf.me, id)
 				return
 			}
@@ -433,7 +436,6 @@ func (rf *Raft) changingIntoCandidate() {
 
 			//假如已经在别的go程中竞选成功变成leader或失败成为follower则不再继续执行
 			if rf.State != Candidate {
-				DPrintf("No.%d is not a candidate anymore", rf.me)
 				rf.mu.Unlock()
 				return
 			}
@@ -445,7 +447,7 @@ func (rf *Raft) changingIntoCandidate() {
 				if receivedVotes > len(rf.peers)/2 {
 					rf.changingIntoLeader()
 				}
-			} else if reply.Term > requestVoteArgs.Term {
+			} else if reply.Term > args.Term {
 				DPrintf("No.%d has quit because of there exists a leader of higher term", rf.me)
 				//从别处得知已经存在更高任期的leader，自动退位成follower
 				rf.CurrentTerm = reply.Term
@@ -464,13 +466,14 @@ func (rf *Raft) changingIntoCandidate() {
 
 func (rf *Raft) changingIntoLeader() {
 	rf.State = Leader
-	DPrintf("***No.%d has become the new leader, term: %d*** ", rf.me, rf.CurrentTerm)
+	DPrintf("*** No.%d has become the new leader, term: %d ***", rf.me, rf.CurrentTerm)
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.nextIndex = make([]int, len(rf.peers))
 	for id := range rf.peers {
 		rf.matchIndex[id] = 0
 		rf.nextIndex[id] = rf.getLastLogIndex()
 	}
+	DPrintf("leader status: %s", rf)
 	go rf.sendingHeartbeatDaemon()
 }
 
@@ -485,10 +488,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	DPrintf("No.%d received requestVote from No.%d", rf.me, args.CandidateId)
 
+	reply.VoteGranted = false
+
 	//过气选手，拒绝
 	if args.Term < rf.CurrentTerm {
 		reply.Term = rf.CurrentTerm
-		reply.VoteGranted = false
 		DPrintf("No.%d refused No.%d's requestVote because of the outdated term", rf.me, args.CandidateId)
 		return
 	}
@@ -500,12 +504,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.VotedFor = -1
 	}
 
-	if rf.VotedFor == -1 {
-		rf.ResetElectionTimerCh <- true
-		rf.State = Follower
-		rf.VotedFor = args.CandidateId
-		reply.VoteGranted = true
-		DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
+	// election restriction
+	if args.LastLogTerm > rf.log[rf.getLastLogIndex()].Term ||
+		(args.LastLogTerm == rf.log[rf.getLastLogIndex()].Term && args.LastLogIndex >= rf.getLastLogIndex()) {
+		if rf.VotedFor == -1 {
+			rf.ResetElectionTimerCh <- true
+			rf.State = Follower
+			rf.VotedFor = args.CandidateId
+			reply.VoteGranted = true
+			DPrintf("No.%d has voted for No.%d", rf.me, args.CandidateId)
+		}
+	} else {
+		DPrintf("No.%d refused No.%d's requestVote because of the election restriction", rf.me, args.CandidateId)
+		DPrintf("status: %s", rf)
 	}
 
 }
@@ -598,7 +609,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//存在任期更高的leader
 	if args.Term < rf.CurrentTerm {
-		DPrintf("No.%d has refused heartbeat from the current leader No.%d because of the outdated term",
+		DPrintf("No.%d refused heartbeat from the current leader No.%d because of the outdated term",
 			rf.me, args.LeaderID)
 		return
 	}
@@ -616,7 +627,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//just heartbeat
 	if args.Entries == nil {
-		DPrintf("get heartbeat")
+		DPrintf("Follower No.%d receive heartbeat", rf.me)
 		reply.Success = true
 		rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
 		go rf.applyLog()
@@ -639,7 +650,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	//PrevLogIndex之后的直接全部替换
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries[:]...)
-	DPrintf("Successfully append to follower %d, current lastIndex: %d", rf.me, rf.getLastLogIndex())
+	DPrintf("Appended to follower %d, lastIndex: %d", rf.me, rf.getLastLogIndex())
 	rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
 	go rf.applyLog()
 }
