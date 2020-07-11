@@ -18,19 +18,16 @@ import (
 //
 func mapF(filename string, contents string) []mapreduce.KeyValue {
 	// Your code here (Part II).
-	f := func(c rune) bool {
-		return !unicode.IsLetter(c) && !unicode.IsNumber(c)
-	}
-
 	//分割文本为单词
-	words := strings.FieldsFunc(contents, f)
+	words := strings.FieldsFunc(contents, func(c rune) bool {
+		return !unicode.IsLetter(c) && !unicode.IsNumber(c)
+	})
 
 	var kv []mapreduce.KeyValue
 
 	for _, word := range words {
-		kv = append(kv, mapreduce.KeyValue{word, "1"})
+		kv = append(kv, mapreduce.KeyValue{Key: word, Value: "1"})
 	}
-
 	return kv
 }
 

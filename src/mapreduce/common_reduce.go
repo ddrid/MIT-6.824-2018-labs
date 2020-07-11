@@ -58,7 +58,7 @@ func doReduce(
 	//具有相同key的value归类到一起
 	var kvPairs = make(map[string][]string)
 
-	//此处nMap指的是由nMap个不同的mapTask处理后的中间文件(原先就不是同一个文件)
+	//此处nMap指的是由nMap个不同的mapTask处理后的中间文件
 	for i := 0; i < nMap; i++ {
 		//打开存储中间数据的文件
 		intermediateFile, err := os.Open(reduceName(jobName, i, reduceTask))
@@ -73,8 +73,7 @@ func doReduce(
 		err = fileDecoder.Decode(&kv)
 		//只要不出错，循环地取出kv对，直到不存在为止
 		for err == nil {
-			_, exist := kvPairs[kv.Key]
-			if !exist {
+			if _, exist := kvPairs[kv.Key]; !exist {
 				//keys数组不存在这个key的话则加入，用于排序
 				keys = append(keys, kv.Key)
 			}
