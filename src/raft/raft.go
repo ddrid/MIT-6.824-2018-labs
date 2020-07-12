@@ -201,6 +201,9 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term    int  // currentTerm, for leader to update itself
 	Success bool // true if follower contained entry matching prevLogIndex and prevLogTerm
+
+	XTerm  int // 冲突处 term，用于fast backup
+	XIndex int // 冲突处第一个 index
 }
 
 //
@@ -357,7 +360,7 @@ func (rf *Raft) applyLog() {
 	defer rf.mu.Unlock()
 
 	if rf.commitIndex > rf.lastApplied {
-		for i := rf.lastApplied + 1; i < rf.commitIndex+1; i++ {
+		for i := rf.lastApplied + 1; i <= rf.commitIndex; i++ {
 			msg := ApplyMsg{
 				CommandIndex: i,
 				Command:      rf.log[i].Command,
@@ -578,7 +581,10 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					} else {
 						DPrintf("No.%d nextIndex backward", id)
-						rf.nextIndex[id]--
+						rf.nextIndex[id] = reply.XIndex
+
+						DPrintf("nextIndex:%d", rf.nextIndex[id])
+
 					}
 				} else {
 					rf.matchIndex[id] = rf.getLastLogIndex()
@@ -636,13 +642,20 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	//本地日志缺失
 	if args.PrevLogIndex > rf.getLastLogIndex() {
-		//直接拒绝，待优化
-		DPrintf("本地日志缺失")
+		DPrintf("本地日志缺失 ")
+		reply.XIndex = rf.getLastLogIndex()
 		return
 	}
-
 	//任期不匹配
 	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+		DPrintf("任期不匹配, fast backup")
+		reply.XTerm = rf.log[args.PrevLogIndex].Term
+		for i := args.PrevLogIndex; i >= 0; i-- {
+			if rf.log[i].Term != reply.XTerm {
+				reply.XIndex = i + 1
+				break
+			}
+		}
 		return
 	}
 
