@@ -19,6 +19,8 @@ package raft
 
 import (
 	"../labrpc"
+	"bytes"
+	"encoding/gob"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -64,7 +66,7 @@ func min(a int, b int) int {
 
 //400-800ms
 func randomElectionTimeInterval() time.Duration {
-	return time.Millisecond * time.Duration(400+rand.Intn(50)*8)
+	return time.Millisecond * time.Duration(300+rand.Intn(50)*6)
 }
 
 const heartbeatInterval = time.Millisecond * time.Duration(100)
@@ -136,6 +138,13 @@ func (rf *Raft) persist() {
 	//
 	//data := w.Bytes()
 	//rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	e.Encode(rf.CurrentTerm)
+	e.Encode(rf.VotedFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -158,6 +167,11 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+	d.Decode(&rf.CurrentTerm)
+	d.Decode(&rf.VotedFor)
+	d.Decode(&rf.log)
 }
 
 type LogEntry struct {
@@ -406,6 +420,7 @@ func (rf *Raft) changingIntoCandidate() {
 	rf.VotedFor = rf.me
 	rf.CurrentTerm++
 	rf.State = Candidate
+	rf.persist()
 	rf.mu.Unlock()
 
 	args := RequestVoteArgs{
@@ -456,10 +471,10 @@ func (rf *Raft) changingIntoCandidate() {
 				rf.CurrentTerm = reply.Term
 				rf.State = Follower
 				rf.VotedFor = -1
+				rf.persist()
 				//重置选举计时器
 				rf.ResetElectionTimerCh <- true
 			}
-
 			rf.mu.Unlock()
 
 		}(id)
@@ -469,6 +484,7 @@ func (rf *Raft) changingIntoCandidate() {
 
 func (rf *Raft) changingIntoLeader() {
 	rf.State = Leader
+	rf.persist()
 	DPrintf("*** No.%d has become the new leader, term: %d ***", rf.me, rf.CurrentTerm)
 	rf.matchIndex = make([]int, len(rf.peers))
 	rf.nextIndex = make([]int, len(rf.peers))
@@ -521,6 +537,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		DPrintf("No.%d refused No.%d's requestVote because of the election restriction", rf.me, args.CandidateId)
 		DPrintf("status: %s", rf)
 	}
+	rf.persist()
 
 }
 
@@ -578,6 +595,7 @@ func (rf *Raft) sendingHeartbeatDaemon() {
 						rf.CurrentTerm = reply.Term
 						rf.State = Follower
 						rf.VotedFor = -1
+						rf.persist()
 						DPrintf("No.%d has changed into a follower because there exist a leader of higher term", rf.me)
 					} else {
 						DPrintf("No.%d nextIndex backward", id)
@@ -627,6 +645,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 未把票给该leader的follower将votedFor置为该leader
 	rf.VotedFor = args.LeaderID
 
+	rf.persist()
+
 	reply.Term = rf.CurrentTerm
 
 	rf.ResetElectionTimerCh <- true
@@ -665,5 +685,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries[:]...)
 	DPrintf("Appended to follower %d, lastIndex: %d", rf.me, rf.getLastLogIndex())
 	rf.commitIndex = min(args.LeaderCommit, rf.getLastLogIndex())
+	rf.persist()
 	go rf.applyLog()
 }
